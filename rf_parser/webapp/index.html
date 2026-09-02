@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pulseq Single-Channel Sequence Builder</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --text: #1b1d21;
+    --muted: #666d78;
+    --border: #dde1e6;
+    --accent: #2f6fed;
+    --accent-ink: #ffffff;
+    --error: #c8392a;
+    --error-bg: #fdeceb;
+    --ok: #1c7a44;
+    --ok-bg: #e9f7ee;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --rf-fill: #2f6fed;
+    --rf-fill-neg: #e0672f;
+    --grid: #e3e6eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;
+      --panel: #1e2127;
+      --text: #eceef1;
+      --muted: #9aa2ad;
+      --border: #33373f;
+      --accent: #6d9bff;
+      --accent-ink: #0c1220;
+      --error: #ff6b5e;
+      --error-bg: #3a1f1c;
+      --ok: #57d68a;
+      --ok-bg: #142a1d;
+      --rf-fill: #6d9bff;
+      --rf-fill-neg: #ff9d63;
+      --grid: #2a2e35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  header {
+    padding: 20px 24px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { margin: 0 0 4px; font-size: 19px; }
+  header p { margin: 0; color: var(--muted); max-width: 72ch; }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) 1fr;
+    gap: 16px;
+    padding: 16px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel + .panel { margin-top: 16px; }
+  h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab {
+    flex: 1 1 auto;
+    padding: 9px 10px;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field.span2 { grid-column: 1 / -1; }
+  label { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
+  label .unit { color: var(--muted); font-weight: 400; }
+  input[type=number], select {
+    width: 100%;
+    padding: 7px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--sans);
+  }
+  input[type=checkbox] { accent-color: var(--accent); }
+  .checkbox-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); grid-column: 1/-1; }
+  fieldset { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 10px 12px; margin: 12px 0 0; }
+  legend { font-size: 12px; font-weight: 700; padding: 0 6px; color: var(--text); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  button {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    padding: 9px 14px;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px; display: none; }
+  .status.error { display: block; background: var(--error-bg); color: var(--error); }
+  .status.ok { display: block; background: var(--ok-bg); color: var(--ok); }
+  canvas { width: 100%; height: 220px; display: block; background: var(--panel); border-radius: 8px; }
+  .diagram-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  table.summary { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
+  table.summary th, table.summary td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+  table.summary th { color: var(--muted); font-weight: 600; }
+  .timeline-list { max-height: 160px; overflow-y: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; }
+  .timeline-list .row { display: flex; justify-content: space-between; padding: 5px 10px; font-size: 12px; font-family: var(--mono); border-bottom: 1px solid var(--border); }
+  .timeline-list .row:last-child { border-bottom: none; }
+  .timeline-list .row.gap { color: var(--muted); }
+  .timeline-list .row.pulse { color: var(--text); font-weight: 600; }
+  textarea.jsonout {
+    width: 100%;
+    height: 260px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    resize: vertical;
+  }
+  .out-actions { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  .hint { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Pulseq Single-Channel Sequence Builder</h1>
+  <p>
+    Enter MRI sequence parameters and generate a single-RF-channel Pulseq waveform description —
+    a schema-compliant <code>.json</code> file (per <code>rf_parser/schema.md</code>) and a matching
+    <code>.seq</code> file readable by <code>rf_parser/rf_waveform_parser.py</code> — plus a live pulse-sequence
+    diagram. Timing uses a simplified small-tip-angle RF amplitude model; it is a parameter/waveform
+    generator for downstream tooling, not a full Bloch simulation.
+  </p>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT: controls -->
+  <div>
+    <div class="panel">
+      <h2>Sequence type</h2>
+      <div class="tabs" role="tablist">
+        <div class="tab active" data-seq="gre">Gradient Echo</div>
+        <div class="tab" data-seq="se">Spin Echo</div>
+        <div class="tab" data-seq="tse">Turbo / Fast SE</div>
+      </div>
+
+      <h2>Global timing &amp; sampling</h2>
+      <div class="field-grid">
+        <div class="field">
+          <label>TR <span class="unit">ms</span></label>
+          <input type="number" id="tr" value="500" min="0.01" step="0.1" />
+        </div>
+        <div class="field" data-seqreq="se tse">
+          <label>TE <span class="unit">ms</span></label>
+          <input type="number" id="te" value="80" min="0.001" step="0.1" />
+        </div>
+        <div class="field" data-seqreq="tse">
+          <label>Echo train length (ETL)</label>
+          <input type="number" id="etl" value="8" min="1" step="1" />
+        </div>
+        <div class="field" data-seqreq="tse">
+          <label>Echo spacing (ESP) <span class="unit">ms</span></label>
+          <input type="number" id="esp" value="10" min="0.001" step="0.1" />
+        </div>
+        <div class="field">
+          <label>Dead time before excitation <span class="unit">µs</span></label>
+          <input type="number" id="deadtime" value="100" min="0" step="1" />
+        </div>
+        <div class="field">
+          <label>Sampling points / pulse (N)</label>
+          <input type="number" id="npoints" value="512" min="16" max="16384" step="1" />
+        </div>
+        <div class="field">
+          <label>DAC bit depth</label>
+          <input type="number" id="nbits" value="14" min="4" max="24" step="1" />
+        </div>
+        <div class="field">
+          <label>RF raster time <span class="unit">µs</span></label>
+          <input type="number" id="rfraster" value="1" min="0.1" step="0.1" />
+        </div>
+      </div>
+
+      <fieldset>
+        <legend>Excitation pulse</legend>
+        <div class="field-grid">
+          <div class="field">
+            <label>Flip angle <span class="unit">deg</span></label>
+            <input type="number" id="ex_flip" value="90" min="0.1" max="180" step="1" />
+          </div>
+          <div class="field">
+            <label>Duration <span class="unit">ms</span></label>
+            <input type="number" id="ex_dur" value="3.0" min="0.001" step="0.1" />
+          </div>
+          <div class="field">
+            <label>Shape</label>
+            <select id="ex_shape">
+              <option value="sinc" selected>Sinc (slice-selective)</option>
+              <option value="hard">Hard / block</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Phase <span class="unit">deg</span></label>
+            <input type="number" id="ex_phase" value="0" step="1" />
+          </div>
+          <div class="field" data-shapereq="ex sinc">
+            <label>Time-bandwidth product</label>
+            <input type="number" id="ex_tbw" value="4" min="1" step="0.5" />
+          </div>
+          <div class="field" data-shapereq="ex sinc">
+            <label>Apodization (Hann α)</label>
+            <input type="number" id="ex_apod" value="0.5" min="0" max="1" step="0.05" />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset data-seqreq="se tse">
+        <legend>Refocusing pulse</legend>
+        <div class="field-grid">
+          <div class="field">
+            <label>Flip angle <span class="unit">deg</span></label>
+            <input type="number" id="rf_flip" value="180" min="0.1" max="180" step="1" />
+          </div>
+          <div class="field">
+            <label>Duration <span class="unit">ms</span></label>
+            <input type="number" id="rf_dur" value="4.0" min="0.001" step="0.1" />
+          </div>
+          <div class="field">
+            <label>Shape</label>
+            <select id="rf_shape">
+              <option value="sinc" selected>Sinc (slice-selective)</option>
+              <option value="hard">Hard / block</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Phase <span class="unit">deg</span></label>
+            <input type="number" id="rf_phase" value="90" step="1" />
+          </div>
+          <div class="field" data-shapereq="rf sinc">
+            <label>Time-bandwidth product</label>
+            <input type="number" id="rf_tbw" value="4" min="1" step="0.5" />
+          </div>
+          <div class="field" data-shapereq="rf sinc">
+            <label>Apodization (Hann α)</label>
+            <input type="number" id="rf_apod" value="0.5" min="0" max="1" step="0.05" />
+          </div>
+        </div>
+        <p class="hint">Phase default of 90° gives the CPMG condition (refocusing 90° out of phase with excitation) for TSE/SE trains.</p>
+      </fieldset>
+
+      <div class="actions">
+        <button class="primary" id="build">Build sequence</button>
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: diagram + output -->
+  <div>
+    <div class="panel">
+      <h2>Pulse sequence diagram — RF channel</h2>
+      <canvas id="diagram" width="1000" height="220"></canvas>
+      <div class="diagram-legend">
+        <span><span class="swatch" style="background:var(--rf-fill)"></span>RF envelope (0° / in-phase)</span>
+        <span><span class="swatch" style="background:var(--rf-fill-neg)"></span>RF envelope (180° / inverted lobe)</span>
+        <span><span class="swatch" style="background:var(--accent)"></span>markers: TE / echoes</span>
+        <label style="display:flex;align-items:center;gap:5px;margin-left:auto;">
+          <input type="checkbox" id="zoom-active" checked /> zoom to active RF window
+        </label>
+      </div>
+      <table class="summary" id="summary-table"></table>
+      <div class="timeline-list" id="timeline-list"></div>
+    </div>
+
+    <div class="panel">
+      <h2>JSON output <span class="badge">rf_parser schema — single channel</span></h2>
+      <div class="out-actions">
+        <button id="copy-json">Copy JSON</button>
+        <button id="dl-json">Download .json</button>
+      </div>
+      <textarea class="jsonout" id="json-out" readonly placeholder="Click “Build sequence” to generate output…"></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>Pulseq output <span class="badge">.seq — readable by rf_waveform_parser.py</span></h2>
+      <div class="out-actions">
+        <button id="dl-seq">Download .seq</button>
+      </div>
+      <p class="hint">
+        The .seq file is not shown inline (waveform shapes make it large) — download it directly.
+        RF-only blocks are emitted (no gradients/ADC), consistent with the single-channel RF JSON above.
+      </p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ───────────────────────────── helpers ─────────────────────────────
+
+  const $ = (id) => document.getElementById(id);
+  const TWO_PI = 2 * Math.PI;
+
+  function round6(x) { return Math.round(x * 1e6) / 1e6; }
+  function wrapAngle(a) { return ((a + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI; }
+  function sinc(x) { return x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x); }
+
+  function deg2rad(d) { return d * Math.PI / 180; }
+
+  // ─────────────────────── RF pulse shape synthesis ───────────────────────
+
+  // Returns a *signed* normalized shape (peak abs = 1) sampled at n points,
+  // cell-centered over [-0.5, 0.5] of the pulse duration.
+  function sincShapeSigned(n, tbw, alpha) {
+    const out = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = n === 1 ? 0 : (i / (n - 1)) - 0.5;
+      const raw = sinc(tbw * x);
+      const win = (1 - alpha) + alpha * Math.cos(TWO_PI * x);
+      out[i] = raw * win;
+    }
+    let peak = 0;
+    for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(out[i]));
+    if (peak === 0) peak = 1;
+    for (let i = 0; i < n; i++) out[i] /= peak;
+    return out;
+  }
+
+  function hardShapeSigned(n) {
+    return new Float64Array(n).fill(1);
+  }
+
+  // Builds one waveform entry matching the WaveformEntry schema.
+  function buildWaveform(waveformId, pulseType, opts) {
+    const { durationMs, shapeType, tbw, apod, flipDeg, phaseDeg, nPoints, nBits, rfRasterUs } = opts;
+    const durS = durationMs / 1e3;
+    const rfRasterS = rfRasterUs * 1e-6;
+    const nSamplesOriginal = Math.max(1, Math.round(durS / rfRasterS));
+
+    const signed = shapeType === 'sinc'
+      ? sincShapeSigned(nPoints, tbw, apod)
+      : hardShapeSigned(nPoints);
+
+    const normalized = new Float64Array(nPoints);
+    const phaseRad = new Float64Array(nPoints);
+    const phaseBase = deg2rad(phaseDeg);
+    for (let i = 0; i < nPoints; i++) {
+      normalized[i] = Math.abs(signed[i]);
+      phaseRad[i] = wrapAngle(phaseBase + (signed[i] < 0 ? Math.PI : 0));
+    }
+
+    const samplingTimeS = durS / nPoints;
+    let integral = 0;
+    for (let i = 0; i < nPoints; i++) integral += normalized[i] * samplingTimeS;
+
+    const flipRad = deg2rad(flipDeg);
+    const amplitudeHz = integral > 0 ? flipRad / (TWO_PI * integral) : 0;
+
+    const maxTwos = (1 << (nBits - 1)) - 1;
+    const waveformRaw = new Array(nPoints);
+    const waveformTwos = new Array(nPoints);
+    const normalizedArr = new Array(nPoints);
+    const phaseArr = new Array(nPoints);
+    for (let i = 0; i < nPoints; i++) {
+      waveformRaw[i] = normalized[i] * amplitudeHz;
+      waveformTwos[i] = Math.round(normalized[i] * maxTwos);
+      normalizedArr[i] = normalized[i];
+      phaseArr[i] = phaseRad[i];
+    }
+
+    return {
+      waveform_id: waveformId,
+      pulse_type: pulseType,
+      n_points: nPoints,
+      n_bits: nBits,
+      max_twos_complement: maxTwos,
+      waveform_raw: waveformRaw,
+      waveform_normalized: normalizedArr,
+      waveform_twos_complement: waveformTwos,
+      phase_rad: phaseArr,
+      sampling_time_s: samplingTimeS,
+      rf_duration_s: durS,
+      rf_amplitude_hz: amplitudeHz,
+      rf_raster_time_s: samplingTimeS,
+      n_samples_original: nPoints,
+      // internal (not part of schema) — used by the diagram / seq exporter
+      _signed: Array.from(signed),
+    };
+  }
+
+  // ───────────────────────── sequence assembly ─────────────────────────
+
+  function readConfig() {
+    const seqType = document.querySelector('.tab.active').dataset.seq;
+    const cfg = {
+      seqType,
+      trMs: parseFloat($('tr').value),
+      teMs: parseFloat($('te').value),
+      etl: parseInt($('etl').value, 10),
+      espMs: parseFloat($('esp').value),
+      deadUs: parseFloat($('deadtime').value),
+      nPoints: parseInt($('npoints').value, 10),
+      nBits: parseInt($('nbits').value, 10),
+      rfRasterUs: parseFloat($('rfraster').value),
+      ex: {
+        flip: parseFloat($('ex_flip').value),
+        dur: parseFloat($('ex_dur').value),
+        shape: $('ex_shape').value,
+        phase: parseFloat($('ex_phase').value),
+        tbw: parseFloat($('ex_tbw').value),
+        apod: parseFloat($('ex_apod').value),
+      },
+      rf: {
+        flip: parseFloat($('rf_flip').value),
+        dur: parseFloat($('rf_dur').value),
+        shape: $('rf_shape').value,
+        phase: parseFloat($('rf_phase').value),
+        tbw: parseFloat($('rf_tbw').value),
+        apod: parseFloat($('rf_apod').value),
+      },
+    };
+    return cfg;
+  }
+
+  // Returns { waveforms:[...], timeline:[...], trDurationS, initialDelayS, tailDelayS, errors:[...] }
+  function computeSequence(cfg) {
+    const errors = [];
+    const nPoints = cfg.nPoints, nBits = cfg.nBits, rfRasterUs = cfg.rfRasterUs;
+    const trS = cfg.trMs / 1e3;
+    const deadS = cfg.deadUs * 1e-6;
+
+    const waveforms = [];
+    const timeline = [];
+
+    const exWave = buildWaveform(0, 'excitation', {
+      durationMs: cfg.ex.dur, shapeType: cfg.ex.shape, tbw: cfg.ex.tbw, apod: cfg.ex.apod,
+      flipDeg: cfg.ex.flip, phaseDeg: cfg.ex.phase, nPoints, nBits, rfRasterUs,
+    });
+    waveforms.push(exWave);
+    const exDurS = cfg.ex.dur / 1e3;
+
+    let refocWave = null, refocDurS = 0;
+    if (cfg.seqType === 'se' || cfg.seqType === 'tse') {
+      refocWave = buildWaveform(1, 'refocusing', {
+        durationMs: cfg.rf.dur, shapeType: cfg.rf.shape, tbw: cfg.rf.tbw, apod: cfg.rf.apod,
+        flipDeg: cfg.rf.flip, phaseDeg: cfg.rf.phase, nPoints, nBits, rfRasterUs,
+      });
+      waveforms.push(refocWave);
+      refocDurS = cfg.rf.dur / 1e3;
+    }
+
+    const markers = []; // { label, timeS } — for diagram annotation (TE / echoes)
+    let usedS = deadS; // time elapsed since TR start
+
+    timeline.push({ type: 'gap', duration_ms: round6(deadS * 1e3) });
+    timeline.push({ type: 'pulse', waveform_id: 0, pulse_type: 'excitation', duration_ms: round6(exDurS * 1e3) });
+    usedS += exDurS;
+    markers.push({ label: 'exc', timeS: deadS + exDurS / 2 });
+
+    if (cfg.seqType === 'gre') {
+      // nothing else — tail fills the rest of TR
+    } else if (cfg.seqType === 'se') {
+      const teS = cfg.teMs / 1e3;
+      const gap1 = teS / 2 - exDurS / 2 - refocDurS / 2;
+      if (gap1 < 0) errors.push('TE is too short for the chosen excitation/refocusing pulse durations.');
+      timeline.push({ type: 'gap', duration_ms: round6(Math.max(gap1, 0) * 1e3) });
+      timeline.push({ type: 'pulse', waveform_id: 1, pulse_type: 'refocusing', duration_ms: round6(refocDurS * 1e3) });
+      usedS += Math.max(gap1, 0) + refocDurS;
+      markers.push({ label: '180°', timeS: deadS + exDurS / 2 + Math.max(gap1, 0) + refocDurS / 2 });
+      markers.push({ label: 'TE (echo)', timeS: deadS + teS });
+    } else if (cfg.seqType === 'tse') {
+      const espS = cfg.espMs / 1e3;
+      const etl = cfg.etl;
+      const gap1 = espS / 2 - exDurS / 2 - refocDurS / 2;
+      if (gap1 < 0) errors.push('Echo spacing is too short for the chosen excitation/refocusing pulse durations.');
+      timeline.push({ type: 'gap', duration_ms: round6(Math.max(gap1, 0) * 1e3) });
+      usedS += Math.max(gap1, 0);
+
+      for (let k = 0; k < etl; k++) {
+        timeline.push({ type: 'pulse', waveform_id: 1, pulse_type: 'refocusing', duration_ms: round6(refocDurS * 1e3) });
+        usedS += refocDurS;
+        markers.push({ label: `echo ${k + 1}`, timeS: deadS + exDurS / 2 + espS / 2 + espS * k });
+        if (k < etl - 1) {
+          const gapMid = espS - refocDurS;
+          if (gapMid < 0) errors.push('Echo spacing is shorter than the refocusing pulse duration.');
+          timeline.push({ type: 'gap', duration_ms: round6(Math.max(gapMid, 0) * 1e3) });
+          usedS += Math.max(gapMid, 0);
+        }
+      }
+    }
+
+    const activeEndS = usedS;
+    const tailS = trS - usedS;
+    if (tailS < 0) errors.push('TR is too short to fit the excitation/refocusing train — increase TR or shorten pulses/TE/ESP.');
+    timeline.push({ type: 'gap', duration_ms: round6(Math.max(tailS, 0) * 1e3) });
+
+    const nRfPulses = timeline.filter((t) => t.type === 'pulse').length;
+
+    return {
+      waveforms,
+      timeline,
+      trDurationS: trS,
+      initialDelayS: deadS,
+      tailDelayS: Math.max(tailS, 0),
+      activeEndS,
+      nRfPulses,
+      nPoints,
+      nBits,
+      markers,
+      errors,
+      cfg,
+    };
+  }
+
+  function stripInternal(w) {
+    const { _signed, ...rest } = w;
+    return rest;
+  }
+
+  function assembleJSON(result) {
+    return {
+      seq_version: '1.5.0',
+      tr_index: 0,
+      tr_duration_s: round6(result.trDurationS),
+      initial_delay_s: round6(result.initialDelayS),
+      tail_delay_s: round6(result.tailDelayS),
+      n_rf_pulses: result.nRfPulses,
+      n_unique_waveforms: result.waveforms.length,
+      n_points: result.nPoints,
+      n_bits: result.nBits,
+      waveforms: result.waveforms.map(stripInternal),
+      timeline: result.timeline,
+    };
+  }
+
+  // ───────────────────────── .seq file assembly ─────────────────────────
+
+  function assembleSeq(result) {
+    const rfRasterS = result.cfg.rfRasterUs * 1e-6;
+    const blockRasterS = 1e-6;
+    const nPoints = result.nPoints;
+
+    const lines = [];
+    lines.push('# Pulseq sequence file generated by the Pulseq Single-Channel Sequence Builder');
+    lines.push('# RF-only blocks (no gradients/ADC) — one channel');
+    lines.push('');
+    lines.push('[VERSION]');
+    lines.push('major 1');
+    lines.push('minor 5');
+    lines.push('revision 0');
+    lines.push('');
+    lines.push('[DEFINITIONS]');
+    lines.push(`AdcRasterTime ${1e-7}`);
+    lines.push(`BlockDurationRaster ${blockRasterS}`);
+    lines.push(`GradientRasterTime ${1e-5}`);
+    lines.push(`RadiofrequencyRasterTime ${rfRasterS}`);
+    lines.push('');
+
+    // Build shapes + RF events per unique waveform.
+    const shapes = []; // { id, values:[...] }
+    const rfEvents = []; // { id, ampl, magId, phaseId, timeId, centerUs, delayUs, use }
+    let nextShapeId = 1;
+
+    result.waveforms.forEach((w, idx) => {
+      const magId = nextShapeId++;
+      shapes.push({ id: magId, values: w.waveform_normalized });
+
+      let phaseId = 0;
+      const hasPhase = w.phase_rad.some((p) => Math.abs(p) > 1e-9);
+      if (hasPhase) {
+        phaseId = nextShapeId++;
+        shapes.push({ id: phaseId, values: w.phase_rad.map((p) => p / TWO_PI) });
+      }
+
+      const timeId = nextShapeId++;
+      const timeVals = new Array(nPoints);
+      for (let i = 0; i < nPoints; i++) {
+        const sampleTimeS = (i + 0.5) * w.sampling_time_s;
+        timeVals[i] = sampleTimeS / rfRasterS;
+      }
+      shapes.push({ id: timeId, values: timeVals });
+
+      const useCode = w.pulse_type === 'excitation' ? 'e' : w.pulse_type === 'refocusing' ? 'r' : 'u';
+      rfEvents.push({
+        id: idx + 1,
+        ampl: w.rf_amplitude_hz,
+        magId, phaseId, timeId,
+        centerUs: (w.rf_duration_s / 2) * 1e6,
+        delayUs: 0,
+        use: useCode,
+      });
+    });
+
+    lines.push('[RF]');
+    lines.push('#id amplitude mag_id phase_id time_shape_id center delay freq_ppm phase_ppm freq phase use');
+    rfEvents.forEach((r) => {
+      lines.push(`${r.id} ${r.ampl} ${r.magId} ${r.phaseId} ${r.timeId} ${r.centerUs} ${r.delayUs} 0 0 0 0 ${r.use}`);
+    });
+    lines.push('');
+
+    lines.push('[BLOCKS]');
+    lines.push('#num dur rf gx gy gz adc ext');
+    let blockNum = 1;
+    result.timeline.forEach((ev) => {
+      const durS = (ev.duration_ms || 0) / 1e3;
+      const durRaster = Math.max(0, Math.round(durS / blockRasterS));
+      if (durRaster === 0) return; // skip zero-length blocks
+      const rfId = ev.type === 'pulse' ? rfEvents[ev.waveform_id].id : 0;
+      lines.push(`${blockNum} ${durRaster} ${rfId} 0 0 0 0 0`);
+      blockNum++;
+    });
+    lines.push('');
+
+    lines.push('[SHAPES]');
+    shapes.forEach((s) => {
+      lines.push(`shape_id ${s.id}`);
+      lines.push(`num_samples ${s.values.length}`);
+      s.values.forEach((v) => lines.push(String(v)));
+      lines.push('');
+    });
+
+    return lines.join('\n');
+  }
+
+  // ───────────────────────────── diagram ─────────────────────────────
+
+  function drawDiagram(result) {
+    const canvas = $('diagram');
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 1000;
+    const cssH = 220;
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const style = getComputedStyle(document.documentElement);
+    const gridColor = style.getPropertyValue('--grid').trim();
+    const textColor = style.getPropertyValue('--muted').trim();
+    const posColor = style.getPropertyValue('--rf-fill').trim();
+    const negColor = style.getPropertyValue('--rf-fill-neg').trim();
+    const accent = style.getPropertyValue('--accent').trim();
+
+    const padL = 46, padR = 14, padT = 14, padB = 28;
+    const plotW = cssW - padL - padR;
+    const plotH = cssH - padT - padB;
+    const trS = result.trDurationS;
+    const zoomed = $('zoom-active').checked && result.activeEndS < trS * 0.98;
+    const windowS = zoomed ? Math.max(result.activeEndS * 1.08, result.activeEndS + trS * 0.01) : trS;
+    const y0 = padT + plotH / 2;
+
+    // peak amplitude across all waveforms, for y-scale
+    let peakHz = 0;
+    result.waveforms.forEach((w) => { peakHz = Math.max(peakHz, w.rf_amplitude_hz); });
+    if (peakHz === 0) peakHz = 1;
+
+    const xOf = (tS) => padL + (tS / windowS) * plotW;
+    const yOf = (v) => y0 - (v / peakHz) * (plotH / 2 - 6);
+
+    // grid + axis
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, y0); ctx.lineTo(padL + plotW, y0);
+    ctx.stroke();
+
+    ctx.fillStyle = textColor;
+    ctx.font = '11px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('0', padL - 6, y0);
+    ctx.fillText(peakHz.toFixed(1) + ' Hz', padL - 6, yOf(peakHz));
+
+    // time ticks
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const nTicks = 5;
+    for (let i = 0; i <= nTicks; i++) {
+      const tS = (windowS * i) / nTicks;
+      const x = xOf(tS);
+      ctx.strokeStyle = gridColor;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke();
+      ctx.fillStyle = textColor;
+      ctx.fillText((tS * 1e3).toFixed(1) + 'ms', x, padT + plotH + 4);
+    }
+
+    // walk the timeline drawing pulse envelopes
+    let cursorS = 0;
+    result.timeline.forEach((ev) => {
+      const durS = (ev.duration_ms || 0) / 1e3;
+      if (ev.type === 'pulse') {
+        const w = result.waveforms[ev.waveform_id];
+        const n = w._signed.length;
+        ctx.beginPath();
+        let started = false;
+        let lastSign = null;
+        for (let i = 0; i < n; i++) {
+          const tS = cursorS + (i / (n - 1)) * durS;
+          const val = w._signed[i] * w.rf_amplitude_hz;
+          const sign = val < 0 ? -1 : 1;
+          if (lastSign !== null && sign !== lastSign) {
+            ctx.strokeStyle = lastSign < 0 ? negColor : posColor;
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+            ctx.beginPath();
+            started = false;
+          }
+          const x = xOf(tS), y = yOf(val);
+          if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+          lastSign = sign;
+        }
+        ctx.strokeStyle = (lastSign || 1) < 0 ? negColor : posColor;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+      }
+      cursorS += durS;
+    });
+
+    // markers (TE / echoes)
+    ctx.strokeStyle = accent;
+    ctx.fillStyle = accent;
+    ctx.setLineDash([4, 3]);
+    result.markers.forEach((m) => {
+      const x = xOf(m.timeS);
+      ctx.beginPath();
+      ctx.moveTo(x, padT);
+      ctx.lineTo(x, padT + plotH);
+      ctx.stroke();
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(m.label, x + 3, padT + 10);
+      ctx.restore();
+    });
+    ctx.setLineDash([]);
+
+    // TR label
+    ctx.strokeStyle = textColor;
+    ctx.fillStyle = textColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const trLabel = zoomed
+      ? `TR = ${(trS * 1e3).toFixed(2)} ms (view zoomed to active window; remaining ${((trS - result.activeEndS) * 1e3).toFixed(1)} ms is silence)`
+      : `TR = ${(trS * 1e3).toFixed(2)} ms`;
+    ctx.font = '11px ' + getComputedStyle(document.body).fontFamily;
+    ctx.fillText(trLabel, padL + plotW / 2, padT + plotH + 16);
+  }
+
+  // ───────────────────────────── rendering ─────────────────────────────
+
+  function renderSummary(result, jsonObj) {
+    const tbl = $('summary-table');
+    const rows = [
+      ['TR', (result.trDurationS * 1e3).toFixed(4) + ' ms'],
+      ['Initial delay', (result.initialDelayS * 1e3).toFixed(4) + ' ms'],
+      ['Tail delay', (result.tailDelayS * 1e3).toFixed(4) + ' ms'],
+      ['RF pulses in TR', result.nRfPulses],
+      ['Unique waveforms', result.waveforms.length],
+      ['Sampling points / pulse', result.nPoints],
+      ['Bit depth', result.nBits + '-bit'],
+    ];
+    result.waveforms.forEach((w) => {
+      rows.push([`Waveform ${w.waveform_id} (${w.pulse_type}) peak amplitude`, w.rf_amplitude_hz.toFixed(4) + ' Hz']);
+    });
+    tbl.innerHTML = rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
+
+    const list = $('timeline-list');
+    list.innerHTML = result.timeline.map((ev) => {
+      if (ev.type === 'gap') {
+        return `<div class="row gap"><span>gap</span><span>${ev.duration_ms.toFixed(3)} ms</span></div>`;
+      }
+      return `<div class="row pulse"><span>${ev.pulse_type} [wf ${ev.waveform_id}]</span><span>${ev.duration_ms.toFixed(3)} ms</span></div>`;
+    }).join('');
+  }
+
+  function showStatus(errors) {
+    const el = $('status');
+    if (errors.length) {
+      el.className = 'status error';
+      el.innerHTML = errors.map((e) => `⚠ ${e}`).join('<br>');
+      return false;
+    }
+    el.className = 'status ok';
+    el.textContent = '✓ Sequence timing is consistent.';
+    return true;
+  }
+
+  let currentResult = null;
+  let currentJSON = null;
+  let currentSeq = null;
+
+  function build() {
+    const cfg = readConfig();
+    const result = computeSequence(cfg);
+    currentResult = result;
+    const ok = showStatus(result.errors);
+
+    renderSummary(result, null);
+    drawDiagram(result);
+
+    currentJSON = assembleJSON(result);
+    $('json-out').value = JSON.stringify(currentJSON, null, 2);
+
+    currentSeq = assembleSeq(result);
+
+    $('dl-json').disabled = false;
+    $('dl-seq').disabled = false;
+    $('copy-json').disabled = false;
+  }
+
+  function download(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // ───────────────────────────── UI wiring ─────────────────────────────
+
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      const seq = tab.dataset.seq;
+      document.querySelectorAll('[data-seqreq]').forEach((el) => {
+        const reqs = el.dataset.seqreq.split(' ');
+        el.style.display = reqs.includes(seq) ? '' : 'none';
+      });
+    });
+  });
+  // initialize visibility
+  document.querySelectorAll('[data-seqreq]').forEach((el) => {
+    const reqs = el.dataset.seqreq.split(' ');
+    el.style.display = reqs.includes('gre') ? '' : 'none';
+  });
+
+  document.querySelectorAll('[data-shapereq]').forEach((el) => {
+    const [prefix, shape] = el.dataset.shapereq.split(' ');
+    const sel = $(prefix + '_shape');
+    const sync = () => { el.style.display = sel.value === shape ? '' : 'none'; };
+    sel.addEventListener('change', sync);
+    sync();
+  });
+
+  $('build').addEventListener('click', build);
+
+  $('copy-json').addEventListener('click', () => {
+    navigator.clipboard.writeText($('json-out').value).catch(() => {});
+  });
+  $('dl-json').addEventListener('click', () => {
+    if (!currentJSON) return;
+    const seq = document.querySelector('.tab.active').dataset.seq;
+    download(`${seq}_single_channel.json`, JSON.stringify(currentJSON, null, 2), 'application/json');
+  });
+  $('dl-seq').addEventListener('click', () => {
+    if (!currentSeq) return;
+    const seq = document.querySelector('.tab.active').dataset.seq;
+    download(`${seq}_single_channel.seq`, currentSeq, 'text/plain');
+  });
+
+  window.addEventListener('resize', () => { if (currentResult) drawDiagram(currentResult); });
+  $('zoom-active').addEventListener('change', () => { if (currentResult) drawDiagram(currentResult); });
+
+  // build once on load with defaults
+  build();
+})();
+</script>
+</body>
+</html>
