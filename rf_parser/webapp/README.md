@@ -22,6 +22,21 @@ flip angle using the standard small-tip-angle integral
 excitation pulses, and is not a full Bloch simulation — treat generated 180° amplitudes as
 indicative starting points.
 
+**Magnitude / DAC scaling mode** (global, applies to every pulse in the sequence):
+
+- **Peak-normalized** (default) — each pulse's `waveform_normalized` / `waveform_twos_complement`
+  are scaled so that pulse's own peak maps to 1.0 / the max DAC code, exactly as described in
+  `schema.md`.
+- **Fixed full-scale reference (Hz)** — instead, `waveform_normalized` /
+  `waveform_twos_complement` are scaled relative to a single reference amplitude you enter (e.g.
+  the hardware's true maximum deliverable B1, which maps to the max DAC code). A pulse using only
+  part of that headroom then shows a peak below 1.0 — useful for representing real DAC/amplifier
+  headroom across pulses with different physical amplitudes (e.g. a 180° refocusing pulse uses
+  more of the full-scale range than a 90° excitation pulse). `waveform_raw` (Hz) and
+  `rf_amplitude_hz` are always the physical amplitude and are unaffected by this choice. If a
+  pulse's physical peak would exceed the reference, its DAC representation is clipped to 1.0 and
+  the build is flagged as an error (increase the reference or lower the flip angle/duration).
+
 The app then produces, live:
 
 1. **A pulse-sequence diagram** — canvas rendering of the RF envelope over one TR, with
@@ -55,3 +70,9 @@ python3 rf_parser/rf_waveform_parser.py my_sequence.seq -o my_sequence_reparsed.
   pulse's peak amplitude (`rf_amplitude_hz`) is the flip-angle-derived scale factor, and each
   pulse's `phase_rad` array carries the requested phase shift (e.g. the default 90°
   excitation/refocusing offset for the CPMG condition).
+- The "fixed full-scale reference" DAC scaling mode is only meaningful in the JSON output
+  produced directly by this tool. `rf_waveform_parser.py` re-peak-normalizes any magnitude shape
+  it reads from a `.seq` file (`magnitude_shape()` divides by that shape's own max), so a `.seq`
+  file downloaded from here and re-parsed will come back peak-normalized regardless of which mode
+  was used to generate it — the physical amplitudes (`waveform_raw` / `rf_amplitude_hz`) still
+  match exactly either way.
