@@ -212,7 +212,26 @@
           <label>RF raster time <span class="unit">µs</span></label>
           <input type="number" id="rfraster" value="1" min="0.1" step="0.1" />
         </div>
+        <div class="field span2">
+          <label>Magnitude / DAC scaling mode</label>
+          <select id="ampmode">
+            <option value="peak" selected>Peak-normalized (each pulse independently scaled to 1.0)</option>
+            <option value="fixed">Fixed full-scale reference amplitude (Hz)</option>
+          </select>
+        </div>
+        <div class="field span2" id="amp_fullscale_wrap" style="display:none;">
+          <label>Full-scale reference amplitude <span class="unit">Hz → max DAC code (1.0)</span></label>
+          <input type="number" id="amp_fullscale_hz" value="500" min="0.0001" step="1" />
+        </div>
       </div>
+      <p class="hint" id="ampmode-hint">
+        Default mode normalizes each pulse's own peak to full DAC scale (<code>waveform_normalized</code> peak = 1.0),
+        matching the schema description. Switching to a fixed reference instead scales
+        <code>waveform_normalized</code> / <code>waveform_twos_complement</code> relative to a shared full-scale
+        amplitude (e.g. the hardware's max deliverable B1), so a pulse using only part of that headroom shows a
+        peak below 1.0 / the max DAC code — <code>waveform_raw</code> (Hz) and <code>rf_amplitude_hz</code> are
+        unaffected either way.
+      </p>
 
       <fieldset>
         <legend>Excitation pulse</legend>
@@ -367,8 +386,13 @@
   }
 
   // Builds one waveform entry matching the WaveformEntry schema.
+  //
+  // opts.refHz (optional): when set, waveform_normalized / waveform_twos_complement are
+  // scaled relative to this fixed full-scale reference amplitude (Hz) instead of being
+  // peak-normalized to the pulse's own amplitude. waveform_raw / rf_amplitude_hz (the
+  // physical Hz quantities) are unaffected by this choice either way.
   function buildWaveform(waveformId, pulseType, opts) {
-    const { durationMs, shapeType, tbw, apod, flipDeg, phaseDeg, nPoints, nBits, rfRasterUs } = opts;
+    const { durationMs, shapeType, tbw, apod, flipDeg, phaseDeg, nPoints, nBits, rfRasterUs, refHz } = opts;
     const durS = durationMs / 1e3;
     const rfRasterS = rfRasterUs * 1e-6;
     const nSamplesOriginal = Math.max(1, Math.round(durS / rfRasterS));
@@ -377,20 +401,28 @@
       ? sincShapeSigned(nPoints, tbw, apod)
       : hardShapeSigned(nPoints);
 
-    const normalized = new Float64Array(nPoints);
+    const shapeMag = new Float64Array(nPoints); // peak = 1.0, independent of DAC scaling mode
     const phaseRad = new Float64Array(nPoints);
     const phaseBase = deg2rad(phaseDeg);
     for (let i = 0; i < nPoints; i++) {
-      normalized[i] = Math.abs(signed[i]);
+      shapeMag[i] = Math.abs(signed[i]);
       phaseRad[i] = wrapAngle(phaseBase + (signed[i] < 0 ? Math.PI : 0));
     }
 
     const samplingTimeS = durS / nPoints;
     let integral = 0;
-    for (let i = 0; i < nPoints; i++) integral += normalized[i] * samplingTimeS;
+    for (let i = 0; i < nPoints; i++) integral += shapeMag[i] * samplingTimeS;
 
     const flipRad = deg2rad(flipDeg);
     const amplitudeHz = integral > 0 ? flipRad / (TWO_PI * integral) : 0;
+
+    // DAC/normalized scaling: peak-normalize to 1.0 (default) or scale relative to a
+    // fixed full-scale reference amplitude. If the pulse's physical peak exceeds the
+    // reference, the DAC representation is clipped to 1.0 and _overflow is flagged.
+    const dacRef = (refHz != null && isFinite(refHz) && refHz > 0) ? refHz : null;
+    const dacScaleRaw = dacRef ? (amplitudeHz / dacRef) : 1;
+    const overflow = dacScaleRaw > 1 + 1e-9;
+    const dacScale = Math.min(dacScaleRaw, 1);
 
     const maxTwos = (1 << (nBits - 1)) - 1;
     const waveformRaw = new Array(nPoints);
@@ -398,9 +430,10 @@
     const normalizedArr = new Array(nPoints);
     const phaseArr = new Array(nPoints);
     for (let i = 0; i < nPoints; i++) {
-      waveformRaw[i] = normalized[i] * amplitudeHz;
-      waveformTwos[i] = Math.round(normalized[i] * maxTwos);
-      normalizedArr[i] = normalized[i];
+      waveformRaw[i] = shapeMag[i] * amplitudeHz;
+      const dacMag = shapeMag[i] * dacScale;
+      normalizedArr[i] = dacMag;
+      waveformTwos[i] = Math.round(dacMag * maxTwos);
       phaseArr[i] = phaseRad[i];
     }
 
@@ -419,8 +452,11 @@
       rf_amplitude_hz: amplitudeHz,
       rf_raster_time_s: samplingTimeS,
       n_samples_original: nPoints,
-      // internal (not part of schema) — used by the diagram / seq exporter
+      // internal (not part of schema) — used by the diagram / seq exporter / validation
       _signed: Array.from(signed),
+      _dacRef: dacRef,
+      _dacScale: dacScale,
+      _overflow: overflow,
     };
   }
 
@@ -438,6 +474,8 @@
       nPoints: parseInt($('npoints').value, 10),
       nBits: parseInt($('nbits').value, 10),
       rfRasterUs: parseFloat($('rfraster').value),
+      ampMode: $('ampmode').value,
+      ampFullScaleHz: parseFloat($('amp_fullscale_hz').value),
       ex: {
         flip: parseFloat($('ex_flip').value),
         dur: parseFloat($('ex_dur').value),
@@ -465,23 +503,31 @@
     const trS = cfg.trMs / 1e3;
     const deadS = cfg.deadUs * 1e-6;
 
+    const refHz = cfg.ampMode === 'fixed' ? cfg.ampFullScaleHz : null;
+
     const waveforms = [];
     const timeline = [];
 
     const exWave = buildWaveform(0, 'excitation', {
       durationMs: cfg.ex.dur, shapeType: cfg.ex.shape, tbw: cfg.ex.tbw, apod: cfg.ex.apod,
-      flipDeg: cfg.ex.flip, phaseDeg: cfg.ex.phase, nPoints, nBits, rfRasterUs,
+      flipDeg: cfg.ex.flip, phaseDeg: cfg.ex.phase, nPoints, nBits, rfRasterUs, refHz,
     });
     waveforms.push(exWave);
+    if (exWave._overflow) {
+      errors.push(`Excitation pulse peak amplitude (${exWave.rf_amplitude_hz.toFixed(2)} Hz) exceeds the fixed full-scale reference (${refHz} Hz) — its DAC representation has been clipped. Increase the reference or reduce flip angle/duration.`);
+    }
     const exDurS = cfg.ex.dur / 1e3;
 
     let refocWave = null, refocDurS = 0;
     if (cfg.seqType === 'se' || cfg.seqType === 'tse') {
       refocWave = buildWaveform(1, 'refocusing', {
         durationMs: cfg.rf.dur, shapeType: cfg.rf.shape, tbw: cfg.rf.tbw, apod: cfg.rf.apod,
-        flipDeg: cfg.rf.flip, phaseDeg: cfg.rf.phase, nPoints, nBits, rfRasterUs,
+        flipDeg: cfg.rf.flip, phaseDeg: cfg.rf.phase, nPoints, nBits, rfRasterUs, refHz,
       });
       waveforms.push(refocWave);
+      if (refocWave._overflow) {
+        errors.push(`Refocusing pulse peak amplitude (${refocWave.rf_amplitude_hz.toFixed(2)} Hz) exceeds the fixed full-scale reference (${refHz} Hz) — its DAC representation has been clipped. Increase the reference or reduce flip angle/duration.`);
+      }
       refocDurS = cfg.rf.dur / 1e3;
     }
 
@@ -549,7 +595,7 @@
   }
 
   function stripInternal(w) {
-    const { _signed, ...rest } = w;
+    const { _signed, _dacRef, _dacScale, _overflow, ...rest } = w;
     return rest;
   }
 
@@ -799,6 +845,13 @@
     ];
     result.waveforms.forEach((w) => {
       rows.push([`Waveform ${w.waveform_id} (${w.pulse_type}) peak amplitude`, w.rf_amplitude_hz.toFixed(4) + ' Hz']);
+      if (w._dacRef != null) {
+        const pct = (w._dacScale * 100).toFixed(1);
+        rows.push([
+          `Waveform ${w.waveform_id} DAC scale (of ${w._dacRef} Hz full-scale)`,
+          `${pct}% of max code${w._overflow ? ' — ⚠ clipped, exceeds reference' : ''}`,
+        ]);
+      }
     });
     tbl.innerHTML = rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('');
 
@@ -872,6 +925,10 @@
   document.querySelectorAll('[data-seqreq]').forEach((el) => {
     const reqs = el.dataset.seqreq.split(' ');
     el.style.display = reqs.includes('gre') ? '' : 'none';
+  });
+
+  $('ampmode').addEventListener('change', () => {
+    $('amp_fullscale_wrap').style.display = $('ampmode').value === 'fixed' ? '' : 'none';
   });
 
   document.querySelectorAll('[data-shapereq]').forEach((el) => {
